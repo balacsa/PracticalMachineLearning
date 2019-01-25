@@ -1,0 +1,155 @@
+---
+title: "PracticalMachineLearningCourseProject"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, you will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of this project is to predict the manner in which they did the exercise.
+
+## Used libraries
+
+```{r libs}
+library(caret)
+library(purrr)
+library(rattle)
+library(rpart)
+library(randomForest)
+
+```
+
+## Getting data
+
+```{r gettingData}
+
+# set envirnoment variables
+workDir <- 'C:/CourseraDataScientistCourse/08_PracticalMachineLearning/courseProject'
+
+trainingDataUrl <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+trainingDataFileName <- 'pml-training.csv'
+trainingDataFileName <- paste(workDir,trainingDataFileName, sep ='/')
+
+testingDataUrl <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+testingDataFileName <- 'pml-testing.csv'
+testingDataFileName <- paste(workDir,testingDataFileName, sep ='/')
+
+# Download the datas
+if (!file.exists(trainingDataFileName)){
+    download.file(trainingDataUrl, trainingDataFileName)
+} else {
+    print("Training file has been already downloaded.")
+}
+if (!file.exists(testingDataFileName)){
+    download.file(testingDataUrl, testingDataFileName)
+} else {
+    print("Test file has been already downloaded.")
+}
+
+# load the datas
+trainingDataSet<- read.csv(trainingDataFileName, sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+testingDataSet<- read.csv(testingDataFileName, sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+```
+
+If you look into the datas you see a lots of NA's columns. These functions needs a lot of space so I skip include the results.
+
+```{r check data}
+#summary(trainingDataSet)
+#summary(testingDataSet)
+#head(trainingDataSet)
+#head(testingDataSet)
+```
+## Preparation
+### Clean the data
+Let's remove the columns which has no data, because it is not necessary for prediction.
+```{r clean}
+notNaColumns <- map_lgl(testingDataSet, ~all(!is.na(.)))
+cleanTestingData <- testingDataSet[notNaColumns]
+
+notNaColumns <- map_lgl(trainingDataSet, ~all(!is.na(.)))
+cleanTrainingData <- trainingDataSet[notNaColumns]
+
+cleanTestingData <- cleanTestingData[, !(names(cleanTestingData) %in% c("problem_id"))]
+
+```
+
+### create training and testing data set
+```{r split}
+set.seed(1973)
+trainData<-createDataPartition(y = cleanTrainingData$classe, p=0.75, list = FALSE)
+trainDataSet <- cleanTrainingData[trainData,]
+testDataSet  <- cleanTrainingData[-trainData,]
+
+```
+
+## Prediction with decision tree
+### Training
+Some fileds do not need to training and prediction so I removed them, and store the rest in the inputVariables variable.
+```{r }
+allVariables <-names(trainDataSet)
+inputVariables <- allVariables[sapply(allVariables,function(x) !x %in% c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp"))]
+
+modFitDT<-rpart(classe ~ ., data=trainDataSet[inputVariables], method="class")
+fancyRpartPlot(modFitDT, caption = "decision tree")
+
+```
+
+### Prediction
+```{r }
+predDtree<-predict(modFitDT, testDataSet[inputVariables], type = "class")
+confusionMatrix(predDtree, testDataSet$classe)
+```
+We can notice that the accuracy is about 70%.
+
+## Prediction with random forest
+### Training
+```{r }
+
+modFitRf<-randomForest(classe ~ ., data=trainDataSet[inputVariables])
+
+```
+
+### Prediction
+```{r }
+predRftree<-predict(modFitRf, testDataSet[inputVariables], type = "class")
+confusionMatrix(predRftree, testDataSet$classe)
+```
+The random forest algorithm is better, because the accuracy is nearly 100%. It is suspicious, so we have to pay attention to overfitting.
+
+### Convert data frame field class
+Some class of testing data fields are different from the training data fields. It causes problems on the random forest prediction so we must convert them.
+```{r }
+cleanTestingData['classe']<-as.factor("A")
+levels(cleanTestingData$classe)<-levels(trainDataSet$classe)
+
+for (i in 1:length(trainDataSet)) {
+  if (class(trainDataSet[,i]) != class(cleanTestingData[,i]) ) {
+    print(paste ( colnames(trainDataSet)[i], class(trainDataSet[,i]) , "!=", colnames(cleanTestingData)[i],class(cleanTestingData[,i])))
+    
+    cleanTestingData[,i] <- as.numeric(cleanTestingData[,i])
+
+    print(paste ( colnames(trainDataSet)[i], class(trainDataSet[,i]) , "->", colnames(cleanTestingData)[i],class(cleanTestingData[,i])))
+  } 
+
+}
+```
+
+### Use the model on the clean testing data
+```{r }
+#predRftree<-predict(modFitRf, cleanTestingData[inputVariables], type = "class")
+#confusionMatrix(predRftree, testDataSet$classe)
+```
+I got error message: "Error in predict.randomForest(modFitRf, cleanTestingData[inputVariables], : Type of predictors in new data do not match that of the training data."
+
+I have checked, the cleanTestingData and the trainDataSet fields are exactly the same.
+I have not found the solution so if you have any advice please help me.
