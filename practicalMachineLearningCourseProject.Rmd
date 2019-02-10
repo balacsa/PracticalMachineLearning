@@ -1,0 +1,176 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "balacsa"
+date: "feb 10 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, you will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of this project is to predict the manner in which they did the exercise.
+
+## Used libraries
+
+```{r libs}
+library(caret)
+library(purrr)
+library(rattle)
+library(rpart)
+library(randomForest)
+
+```
+
+## Getting data
+
+The first step is getting the data from the Internet. If it is already available on my compter I skip the downloading.
+
+```{r gettingData}
+
+# set envirnoment variables
+workDir <- 'C:/CourseraDataScientistCourse/08_PracticalMachineLearning/courseProject'
+
+trainingDataUrl <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+trainingDataFileName <- 'pml-training.csv'
+trainingDataFileName <- paste(workDir,trainingDataFileName, sep ='/')
+
+testingDataUrl <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+testingDataFileName <- 'pml-testing.csv'
+testingDataFileName <- paste(workDir,testingDataFileName, sep ='/')
+
+# Download the datas
+if (!file.exists(trainingDataFileName)){
+    download.file(trainingDataUrl, trainingDataFileName)
+} else {
+    print("Training file has been already downloaded.")
+}
+if (!file.exists(testingDataFileName)){
+    download.file(testingDataUrl, testingDataFileName)
+} else {
+    print("Test file has been already downloaded.")
+}
+
+# load the datas
+trainingDataSet<- read.csv(trainingDataFileName, sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+testingDataSet<- read.csv(testingDataFileName, sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+```
+```{r }
+dim(trainingDataSet)
+dim(testingDataSet)
+```
+
+## Preparation
+The dim functions say there are 160 columns are in the datasets. If you look into the datasets with head or summary functions you see a lots of NA's columns. These functions needs a lot of space so I skip include the results.
+
+### Clean the data
+So the next step is to remove the columns which has no data, because it is not necessary for prediction.
+```{r clean}
+notNaColumns <- map_lgl(testingDataSet, ~all(!is.na(.)))
+cleanTestingData <- testingDataSet[notNaColumns]
+
+notNaColumns <- map_lgl(trainingDataSet, ~all(!is.na(.)))
+cleanTrainingData <- trainingDataSet[notNaColumns]
+
+```
+
+### create training and testing data set
+After we removed most of the unrelevant columns lets split the training data set into 2 partitions. The first one will be the training data set for making models, the second one will be used for validation.
+The suggested ratio for splitting dataset into training and validation dataset is 70% and 30%.
+
+```{r split}
+set.seed(1973)
+trainData<-createDataPartition(y = cleanTrainingData$classe, p=0.70, list = FALSE)
+trainDataSet <- cleanTrainingData[trainData,]
+testDataSet  <- cleanTrainingData[-trainData,]
+
+```
+## Modeling
+### Field selection
+As the part of the modelling we should select the necessary fields. Some (eg.: timestamps, text fields ) do not useful to training and prediction so I removed them, and store the rest in the "inputVariables" variable.
+```{r }
+allVariables <-names(trainDataSet)
+inputVariables <- allVariables[sapply(allVariables,function(x) !x %in% c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window"))]
+```
+We can reduce the number of variables checking the correlations between variables. These are the variablas wich has strong correlation. Becasue that is few I skip the deeper analysis:
+
+```{r }
+
+corMatrix<-cor(trainDataSet[inputVariables[0:53]])
+corMatrix<-round(corMatrix,2)
+
+o=1
+for (r in 1:53) {
+  for (c in 1:o) {
+    if (corMatrix[r,c] > 0.85 & corMatrix[r,c]!=1  ) {
+      print(paste(rownames(corMatrix)[r],'->',colnames(corMatrix)[c]) )
+    } 
+  }
+  o=o+1
+
+}
+
+```
+The classe field is missing for predcition with randomforest algorithm, so I make based on classe filed in testing data.
+```{r }
+cleanTestingData['classe']<-as.factor("A")
+levels(cleanTestingData$classe)<-levels(trainDataSet$classe)
+
+```
+## Prediction with decision tree
+### Training
+```{r }
+modFitDT<-rpart(classe ~ ., data=trainDataSet[inputVariables], method="class")
+fancyRpartPlot(modFitDT, caption = "decision tree")
+```
+
+### Prediction
+```{r }
+predDtree<-predict(modFitDT, testDataSet[inputVariables], type = "class")
+confusionMatrix(predDtree, testDataSet$classe)
+```
+## Prediction with random forest
+### Training
+```{r }
+modFitRf<-randomForest(classe ~ ., data=trainDataSet[inputVariables])
+```
+
+### Prediction
+```{r }
+predRftree<-predict(modFitRf, testDataSet[inputVariables], type = "class")
+confusionMatrix(predRftree, testDataSet$classe)
+```
+## Prediction with GBM
+### Training
+```{r }
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modFitGBM  <- train(classe ~ ., data=trainDataSet[inputVariables], method = "gbm",trControl = controlGBM, verbose = FALSE)
+```
+### Prediction
+```{r }
+predictGBM <- predict(modFitGBM, newdata=testDataSet[inputVariables])
+confusionMatrix(predictGBM, testDataSet$classe)
+```
+
+## Accuracy of the models based on confusion matrix
+### Decision tree: 80.10%%
+### Random forest: 99,76%
+### Generalized Boosted Model: 98,62%
+
+The random forest algorithm is the best, so I apply this model to predict the 20 rows quiz dataset.
+
+## Predicition classe on the 20 rows training data with random forest
+The result for the test is:
+```{r }
+predRftree<-predict(modFitRf, cleanTestingData[inputVariables], type = "class")
+predRftree
+```
